@@ -1,15 +1,16 @@
-# from Crypto.Cipher import AES
-# from Crypto.Cipher import RSA
-#
-#
-# def print_hi(name):
-#     # Use a breakpoint in the code line below to debug your script.
-#     print(f'Hi, {name}')  # Press ⌘F8 to toggle the breakpoint.
-#
-#
-#
-# # Press the green button in the gutter to run the script.
-# if __name__ == '__main__':
-#     print_hi('PyCharm')
-#
-# # See PyCharm help at https://www.jetbrains.com/help/pycharm/
+"""
+Encrypted File Transfer Server
+main.py: Entry point of Encrypted File Transfer Server.
+"""
+__author__ = "Arthur Rennert"
+
+import utils
+import server
+
+if __name__ == '__main__':
+    PORT_INFO = "port.info"
+    port = utils.parsePort(PORT_INFO)
+    server = server.Server('127.0.0.1', port)
+    if not server.start():
+        utils.stop_server(f"Server start exception: {server.lastErr}")
+

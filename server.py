@@ -1,55 +1,232 @@
-# first of all import the socket library
+"""
+Encrypted File Transfer Server
+server.py: contains Server class which has socket logics. Contains main loop of the server.
+"""
+
+# TODO
+# CHECK IF MASK PARAMETER NEEDED IN ACCEPT AND READ FUNCTIONS
+
+__author__ = "Arthur Rennert"
+
+import logging
+import selectors
+import uuid
 import socket
-import os
+import database
+import protocol
+from datetime import datetime
 
 
-def main():
-    s = socket.socket()  # create a socket
-    print("Socket successfully created")
+class Server:
+    DATABASE = 'server.db'
+    PACKET_SIZE = 1024  # Default packet size.
+    MAX_QUEUED_CONN = 10  # Default maximum number of queued connections.
+    IS_BLOCKING = False  # Blocking indicator!
 
-    port_file_path = './port.info'
-    if os.path.exists(port_file_path):
-        with open(port_file_path) as file:  # get port from file
-            first_line = file.readlines()[0]
-            port = int(first_line)
-    else:
-        port = 1234  # default port
+    def __init__(self, host, port):
+        """ Initialize server. Map request codes to handles. """
+        logging.basicConfig(format='[%(levelname)s - %(asctime)s]: %(message)s', level=logging.INFO, datefmt='%H:%M:%S')
+        self.host = host
+        self.port = port
+        self.sel = selectors.DefaultSelector()
+        self.database = database.Database(Server.DATABASE)
+        self.lastErr = ""  # Last Error description.
+        self.requestHandle = {
+            protocol.ERequestCode.REQUEST_REGISTRATION.value: self.handleRegistrationRequest,
+            protocol.ERequestCode.REQUEST_PUBLIC_KEY.value: self.handlePublicKeyRequest,
+            protocol.ERequestCode.REQUEST_SEND_FILE.value: self.handleSendFileRequest,
+            protocol.ERequestCode.REQUEST_CRC_VALID.value: self.handleCRCValidRequest,
+            protocol.ERequestCode.REQUEST_CRC_INVALID.value: self.handleCRCInvalidRequest,
+            protocol.ERequestCode.REQUEST_CRC_INVALID_FOURTH_TIME.value: self.handleCRCInvalidFourthTimeRequest
+        }
 
-    # s.bind((socket.gethostname(), port))  # bind to the port
-    s.bind(('127.0.0.1', port))  # bind to the port
-    print("socket bounded to", port)
+    def accept(self, sock, mask):
+        """ Accepts a connection from client """
+        conn, address = sock.accept()
+        conn.setblocking(Server.IS_BLOCKING)
+        self.sel.register(conn, selectors.EVENT_READ, self.read)
 
-    s.listen(5)  # put the socket into listening mode
-    print("socket is listening")
-    count = 0
-    # a forever loop until we interrupt it or an error occurs
-    while True:
-        conn, addr = s.accept()  # establish connection with client.
-        count += 1
-        print('count=', count)
-        print('got connection from', addr)
+    def read(self, conn, mask):
+        """ Reads data from the client and parses it """
+        logging.info("A client has connected.")
+        data = conn.recv(Server.PACKET_SIZE)
+        if data:
+            request_header = protocol.RequestHeader()
+            success = False
+            if not request_header.unpack(data):
+                logging.error("Failed to parse request header!")
+            else:
+                if request_header.code in self.requestHandle.keys():
+                    success = self.requestHandle[request_header.code](conn, data)  # invoke corresponding handle.
+            if not success:  # return generic error upon failure.
+                response_header = protocol.ResponseHeader(protocol.EResponseCode.RESPONSE_ERROR.value)
+                self.write(conn, response_header.pack())
+            self.database.setLastSeen(request_header.clientID, str(datetime.now()))
+        self.sel.unregister(conn)
+        conn.close()
 
-        # send a thank-you message to the client. encoding to send byte type.
-        msg_to_c = 'Thank you for connecting'
-        print('msg TO client:', msg_to_c)
-        conn.send(msg_to_c.encode())
+    def write(self, conn, data):
+        """ Send a response to client"""
+        size = len(data)
+        sent = 0
+        while sent < size:
+            leftover = size - sent
+            if leftover > Server.PACKET_SIZE:
+                leftover = Server.PACKET_SIZE
+            toSend = data[sent:sent + leftover]
+            if len(toSend) < Server.PACKET_SIZE:
+                toSend += bytearray(Server.PACKET_SIZE - len(toSend))
+            try:
+                conn.send(toSend)
+                sent += len(toSend)
+            except:
+                logging.error("Failed to send response to " + conn)
+                return False
+        logging.info("Response sent successfully.")
+        return True
 
-        # receive data stream. it won't accept data packet greater than 1024 bytes
-        msg_from_client = conn.recv(1024).decode()
-        if not msg_from_client:
-            # if data is not received break
-            break
-        print("msg FROM client:" + str(msg_from_client))
+    def start(self):
+        """ Start listen for connections. Contains the main loop. """
+        self.database.initialize()
+        try:
+            sock = socket.socket()
+            sock.bind((self.host, self.port))
+            sock.listen(Server.MAX_QUEUED_CONN)
+            sock.setblocking(Server.IS_BLOCKING)
+            self.sel.register(sock, selectors.EVENT_READ, self.accept)
+        except Exception as e:
+            self.lastErr = e
+            return False
+        print(f"Server is listening for connections on port {self.port}..")
+        while True:
+            try:
+                events = self.sel.select()
+                for key, mask in events:
+                    callback = key.data
+                    callback(key.fileobj, mask)
+            except Exception as e:
+                logging.exception(f"Server main loop exception: {e}")
 
-        # send a thank-you message to the client. encoding to send byte type.
-        msg_to_c = 'goodbye'
-        print('msg TO client:', msg_to_c)
-        conn.send(msg_to_c.encode())
+    def handleRegistrationRequest(self, conn, data):
+        """ Register a new user. Save to db. """
+        request = protocol.RegistrationRequest()
+        response = protocol.RegistrationResponse()
+        if not request.unpack(data):
+            logging.error("Registration Request: Failed parsing request.")
+            return False
+        try:
+            if not request.name.isalnum():
+                logging.info(f"Registration Request: Invalid requested username ({request.name}))")
+                return False
+            if self.database.clientUsernameExists(request.name):
+                logging.info(f"Registration Request: Username ({request.name}) already exists.")
+                return False
+        except:
+            logging.error("Registration Request: Failed to connect to database.")
+            return False
 
-        conn.close()  # Close the connection with the client
-        # break  # uncomment this to debug - kills the server after 1 client
-    return
+        clnt = database.Client(uuid.uuid4().hex, request.name, request.publicKey, str(datetime.now()))
+        if not self.database.storeClient(clnt):
+            logging.error(f"Registration Request: Failed to store client {request.name}.")
+            return False
+        logging.info(f"Successfully registered client {request.name}.")
+        response.clientID = clnt.ID
+        response.header.payloadSize = protocol.CLIENT_ID_SIZE
+        return self.write(conn, response.pack())
 
+    def handleUsersListRequest(self, conn, data):
+        """ Respond with clients list to user request """
+        request = protocol.RequestHeader()
+        if not request.unpack(data):
+            logging.error("Users list Request: Failed to parse request header!")
+        try:
+            if not self.database.clientIdExists(request.clientID):
+                logging.info(f"Users list Request: clientID ({request.clientID}) does not exists!")
+                return False
+        except:
+            logging.error("Users list Request:: Failed to connect to database.")
+            return False
+        response = protocol.ResponseHeader(protocol.EResponseCode.RESPONSE_USERS.value)
+        clients = self.database.getClientsList()
+        payload = b""
+        for user in clients:
+            if user[0] != request.clientID:  # Do not send self. Requirement.
+                payload += user[0]
+                name = user[1] + bytes('\0' * (protocol.NAME_SIZE - len(user[1])), 'utf-8')
+                payload += name
+        response.payloadSize = len(payload)
+        logging.info(f"Clients list was successfully built for clientID ({request.clientID}).")
+        return self.write(conn, response.pack() + payload)
 
-if __name__ == '__main__':
-    main()
+    def handlePublicKeyRequest(self, conn, data):
+        """ respond with public key of requested user id """
+        request = protocol.PublicKeyRequest()
+        response = protocol.PublicKeyResponse()
+        if not request.unpack(data):
+            logging.error("PublicKey Request: Failed to parse request header!")
+        key = self.database.getClientPublicKey(request.clientID)
+        if not key:
+            logging.info(f"PublicKey Request: clientID doesn't exists.")
+            return False
+        response.clientID = request.clientID
+        response.publicKey = key
+        response.header.payloadSize = protocol.CLIENT_ID_SIZE + protocol.PUBLIC_KEY_SIZE
+        logging.info(f"Public Key response was successfully built to clientID ({request.header.clientID}).")
+        return self.write(conn, response.pack())
+
+    def handleMessageSendRequest(self, conn, data):
+        """ store a message from one user to another """
+        request = protocol.MessageSendRequest()
+        response = protocol.MessageSentResponse()
+        if not request.unpack(conn, data):
+            logging.error("Send Message Request: Failed to parse request header!")
+
+        msg = database.Message(request.clientID,
+                               request.header.clientID,
+                               request.messageType,
+                               request.content)
+
+        msgId = self.database.storeMessage(msg)
+        if not msgId:
+            logging.error("Send Message Request: Failed to store msg.")
+            return False
+
+        response.header.payloadSize = protocol.CLIENT_ID_SIZE + protocol.MSG_ID_SIZE
+        response.clientID = request.clientID
+        response.messageID = msgId
+        logging.info(f"Message from clientID ({request.header.clientID}) successfully stored.")
+        return self.write(conn, response.pack())
+
+    def handlePendingMessagesRequest(self, conn, data):
+        """ respond with pending messages """
+        request = protocol.RequestHeader()
+        response = protocol.ResponseHeader(protocol.EResponseCode.RESPONSE_PENDING_MSG.value)
+        if not request.unpack(data):
+            logging.error("Pending messages request: Failed to parse request header!")
+        try:
+            if not self.database.clientIdExists(request.clientID):
+                logging.info(f"clientID ({request.clientID}) does not exists!")
+                return False
+        except:
+            logging.error("Pending messages request: Failed to connect to database.")
+            return False
+
+        payload = b""
+        messages = self.database.getPendingMessages(request.clientID)
+        ids = []
+        for msg in messages:  # id, from, type, content
+            pending = protocol.PendingMessage()
+            pending.messageID = int(msg[0])
+            pending.messageClientID = msg[1]
+            pending.messageType = int(msg[2])
+            pending.content = msg[3]
+            pending.messageSize = len(msg[3])
+            ids += [pending.messageID]
+            payload += pending.pack()
+        response.payloadSize = len(payload)
+        logging.info(f"Pending messages to clientID ({request.clientID}) successfully extracted.")
+        if self.write(conn, response.pack() + payload):
+            for msg_id in ids:
+                self.database.removeMessage(msg_id)
+            return True
+        return False
