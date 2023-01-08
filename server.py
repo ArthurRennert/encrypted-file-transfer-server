@@ -73,12 +73,12 @@ class Server:
             leftover = size - sent
             if leftover > Server.PACKET_SIZE:
                 leftover = Server.PACKET_SIZE
-            toSend = data[sent:sent + leftover]
-            if len(toSend) < Server.PACKET_SIZE:
-                toSend += bytearray(Server.PACKET_SIZE - len(toSend))
+            to_send = data[sent:sent + leftover]
+            if len(to_send) < Server.PACKET_SIZE:
+                to_send += bytearray(Server.PACKET_SIZE - len(to_send))
             try:
-                conn.send(toSend)
-                sent += len(toSend)
+                conn.send(to_send)
+                sent += len(to_send)
             except:
                 logging.error("Failed to send response to " + conn)
                 return False
@@ -86,7 +86,7 @@ class Server:
         return True
 
     def start(self):
-        """ Start listen for connections. Contains the main loop. """
+        """ Start listening for connections. Contains the main loop """
         self.database.initialize()
         try:
             sock = socket.socket()
