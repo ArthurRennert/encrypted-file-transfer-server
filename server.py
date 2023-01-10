@@ -33,7 +33,7 @@ class Server:
         self.lastErr = ""  # Last Error description.
         self.requestHandle = {
             protocol.ERequestCode.REQUEST_REGISTRATION.value: self.handle_registration_request,
-            protocol.ERequestCode.REQUEST_PUBLIC_KEY.value: self.handle_public_key_request,
+            protocol.ERequestCode.REQUEST_SEND_PUBLIC_KEY.value: self.handle_public_key_request,
             protocol.ERequestCode.REQUEST_SEND_FILE.value: self.handleSendFileRequest,
             protocol.ERequestCode.REQUEST_CRC_VALID.value: self.handleCRCValidRequest,
             protocol.ERequestCode.REQUEST_CRC_INVALID.value: self.handleCRCInvalidRequest,
@@ -134,6 +134,7 @@ class Server:
         response.header.payloadSize = protocol.CLIENT_ID_SIZE
         return self.write(conn, response.pack())
 
+    # need to modify this function. need to store public key of client. not to send public key to client
     def handle_public_key_request(self, conn, data):
         """ Respond with public key of requested user id """
         request = protocol.PublicKeyRequest()
@@ -149,60 +150,3 @@ class Server:
         response.header.payloadSize = protocol.CLIENT_ID_SIZE + protocol.PUBLIC_KEY_SIZE
         logging.info(f"Public Key response was successfully built to clientID ({request.header.clientID}).")
         return self.write(conn, response.pack())
-
-    # def handleMessageSendRequest(self, conn, data):
-    #     """ store a message from one user to another """
-    #     request = protocol.MessageSendRequest()
-    #     response = protocol.MessageSentResponse()
-    #     if not request.unpack(conn, data):
-    #         logging.error("Send Message Request: Failed to parse request header!")
-    #
-    #     msg = database.Message(request.clientID,
-    #                            request.header.clientID,
-    #                            request.messageType,
-    #                            request.content)
-    #
-    #     msgId = self.database.storeMessage(msg)
-    #     if not msgId:
-    #         logging.error("Send Message Request: Failed to store msg.")
-    #         return False
-    #
-    #     response.header.payloadSize = protocol.CLIENT_ID_SIZE + protocol.MSG_ID_SIZE
-    #     response.clientID = request.clientID
-    #     response.messageID = msgId
-    #     logging.info(f"Message from clientID ({request.header.clientID}) successfully stored.")
-    #     return self.write(conn, response.pack())
-    #
-    # def handlePendingMessagesRequest(self, conn, data):
-    #     """ respond with pending messages """
-    #     request = protocol.RequestHeader()
-    #     response = protocol.ResponseHeader(protocol.EResponseCode.RESPONSE_PENDING_MSG.value)
-    #     if not request.unpack(data):
-    #         logging.error("Pending messages request: Failed to parse request header!")
-    #     try:
-    #         if not self.database.clientIdExists(request.clientID):
-    #             logging.info(f"clientID ({request.clientID}) does not exists!")
-    #             return False
-    #     except:
-    #         logging.error("Pending messages request: Failed to connect to database.")
-    #         return False
-    #
-    #     payload = b""
-    #     messages = self.database.getPendingMessages(request.clientID)
-    #     ids = []
-    #     for msg in messages:  # id, from, type, content
-    #         pending = protocol.PendingMessage()
-    #         pending.messageID = int(msg[0])
-    #         pending.messageClientID = msg[1]
-    #         pending.messageType = int(msg[2])
-    #         pending.content = msg[3]
-    #         pending.messageSize = len(msg[3])
-    #         ids += [pending.messageID]
-    #         payload += pending.pack()
-    #     response.payloadSize = len(payload)
-    #     logging.info(f"Pending messages to clientID ({request.clientID}) successfully extracted.")
-    #     if self.write(conn, response.pack() + payload):
-    #         for msg_id in ids:
-    #             self.database.removeMessage(msg_id)
-    #         return True
-    #     return False

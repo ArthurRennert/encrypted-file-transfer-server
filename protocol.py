@@ -32,7 +32,7 @@ CHECKSUM_SIZE = 4
 # Request Codes
 class ERequestCode(Enum):
     REQUEST_REGISTRATION = 1100  # uuid ignored.
-    REQUEST_PUBLIC_KEY = 1101
+    REQUEST_SEND_PUBLIC_KEY = 1101
     REQUEST_SEND_FILE = 1103
     REQUEST_CRC_VALID = 1104
     REQUEST_CRC_INVALID = 1005  # request 1103 coming right after this request
