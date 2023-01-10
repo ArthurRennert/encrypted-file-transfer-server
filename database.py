@@ -14,16 +14,18 @@ import logging
 import sqlite3
 import protocol
 
+DEFAULT_VALUE = 0
+
 
 class Client:
     """ Represents a client entry """
 
-    def __init__(self, cid, cname, public_key, last_seen, aes_key):
+    def __init__(self, cid, cname, last_seen):
         self.ID = bytes.fromhex(cid)  # Unique client ID, 16 bytes.
         self.Name = cname  # Client's name, null terminated ascii string, 255 bytes.
-        self.PublicKey = public_key  # Client's public key, 160 bytes.
+        self.PublicKey = DEFAULT_VALUE  # Client's public key, 160 bytes.
         self.LastSeen = last_seen  # The Date & time of client's last request.
-        self.AESKey = aes_key
+        self.AESKey = DEFAULT_VALUE
 
     def validate(self):
         """ Validate Client attributes according to the requirements """
@@ -31,12 +33,12 @@ class Client:
             return False
         if not self.Name or len(self.Name) >= protocol.NAME_SIZE:
             return False
-        if not self.PublicKey or len(self.PublicKey) != protocol.PUBLIC_KEY_SIZE:
-            return False
+        # if not self.PublicKey or len(self.PublicKey) != protocol.PUBLIC_KEY_SIZE:
+        #     return False
         if not self.LastSeen:
             return False
-        if not self.AESKey or len(self.AESKey) != protocol.AES_KEY_SIZE:
-            return False
+        # if not self.AESKey or len(self.AESKey) != protocol.AES_KEY_SIZE:
+        #     return False
         return True
 
 

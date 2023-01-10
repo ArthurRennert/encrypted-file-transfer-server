@@ -32,8 +32,8 @@ class Server:
         self.database = database.Database(Server.DATABASE)
         self.lastErr = ""  # Last Error description.
         self.requestHandle = {
-            protocol.ERequestCode.REQUEST_REGISTRATION.value: self.handleRegistrationRequest,
-            protocol.ERequestCode.REQUEST_PUBLIC_KEY.value: self.handlePublicKeyRequest,
+            protocol.ERequestCode.REQUEST_REGISTRATION.value: self.handle_registration_request,
+            protocol.ERequestCode.REQUEST_PUBLIC_KEY.value: self.handle_public_key_request,
             protocol.ERequestCode.REQUEST_SEND_FILE.value: self.handleSendFileRequest,
             protocol.ERequestCode.REQUEST_CRC_VALID.value: self.handleCRCValidRequest,
             protocol.ERequestCode.REQUEST_CRC_INVALID.value: self.handleCRCInvalidRequest,
@@ -107,7 +107,7 @@ class Server:
             except Exception as e:
                 logging.exception(f"Server main loop exception: {e}")
 
-    def handleRegistrationRequest(self, conn, data):
+    def handle_registration_request(self, conn, data):
         """ Register a new user. Save to db. """
         request = protocol.RegistrationRequest()
         response = protocol.RegistrationResponse()
@@ -118,53 +118,29 @@ class Server:
             if not request.name.isalnum():
                 logging.info(f"Registration Request: Invalid requested username ({request.name}))")
                 return False
-            if self.database.clientUsernameExists(request.name):
+            if self.database.client_username_exists(request.name):
                 logging.info(f"Registration Request: Username ({request.name}) already exists.")
                 return False
         except:
             logging.error("Registration Request: Failed to connect to database.")
             return False
 
-        clnt = database.Client(uuid.uuid4().hex, request.name, request.publicKey, str(datetime.now()))
-        if not self.database.storeClient(clnt):
+        client = database.Client(uuid.uuid4().hex, request.name, str(datetime.now()))
+        if not self.database.store_client(client):
             logging.error(f"Registration Request: Failed to store client {request.name}.")
             return False
         logging.info(f"Successfully registered client {request.name}.")
-        response.clientID = clnt.ID
+        response.clientID = client.ID
         response.header.payloadSize = protocol.CLIENT_ID_SIZE
         return self.write(conn, response.pack())
 
-    def handleUsersListRequest(self, conn, data):
-        """ Respond with clients list to user request """
-        request = protocol.RequestHeader()
-        if not request.unpack(data):
-            logging.error("Users list Request: Failed to parse request header!")
-        try:
-            if not self.database.clientIdExists(request.clientID):
-                logging.info(f"Users list Request: clientID ({request.clientID}) does not exists!")
-                return False
-        except:
-            logging.error("Users list Request:: Failed to connect to database.")
-            return False
-        response = protocol.ResponseHeader(protocol.EResponseCode.RESPONSE_USERS.value)
-        clients = self.database.getClientsList()
-        payload = b""
-        for user in clients:
-            if user[0] != request.clientID:  # Do not send self. Requirement.
-                payload += user[0]
-                name = user[1] + bytes('\0' * (protocol.NAME_SIZE - len(user[1])), 'utf-8')
-                payload += name
-        response.payloadSize = len(payload)
-        logging.info(f"Clients list was successfully built for clientID ({request.clientID}).")
-        return self.write(conn, response.pack() + payload)
-
-    def handlePublicKeyRequest(self, conn, data):
-        """ respond with public key of requested user id """
+    def handle_public_key_request(self, conn, data):
+        """ Respond with public key of requested user id """
         request = protocol.PublicKeyRequest()
         response = protocol.PublicKeyResponse()
         if not request.unpack(data):
             logging.error("PublicKey Request: Failed to parse request header!")
-        key = self.database.getClientPublicKey(request.clientID)
+        key = self.database.get_client_public_key(request.clientID)
         if not key:
             logging.info(f"PublicKey Request: clientID doesn't exists.")
             return False
@@ -174,59 +150,59 @@ class Server:
         logging.info(f"Public Key response was successfully built to clientID ({request.header.clientID}).")
         return self.write(conn, response.pack())
 
-    def handleMessageSendRequest(self, conn, data):
-        """ store a message from one user to another """
-        request = protocol.MessageSendRequest()
-        response = protocol.MessageSentResponse()
-        if not request.unpack(conn, data):
-            logging.error("Send Message Request: Failed to parse request header!")
-
-        msg = database.Message(request.clientID,
-                               request.header.clientID,
-                               request.messageType,
-                               request.content)
-
-        msgId = self.database.storeMessage(msg)
-        if not msgId:
-            logging.error("Send Message Request: Failed to store msg.")
-            return False
-
-        response.header.payloadSize = protocol.CLIENT_ID_SIZE + protocol.MSG_ID_SIZE
-        response.clientID = request.clientID
-        response.messageID = msgId
-        logging.info(f"Message from clientID ({request.header.clientID}) successfully stored.")
-        return self.write(conn, response.pack())
-
-    def handlePendingMessagesRequest(self, conn, data):
-        """ respond with pending messages """
-        request = protocol.RequestHeader()
-        response = protocol.ResponseHeader(protocol.EResponseCode.RESPONSE_PENDING_MSG.value)
-        if not request.unpack(data):
-            logging.error("Pending messages request: Failed to parse request header!")
-        try:
-            if not self.database.clientIdExists(request.clientID):
-                logging.info(f"clientID ({request.clientID}) does not exists!")
-                return False
-        except:
-            logging.error("Pending messages request: Failed to connect to database.")
-            return False
-
-        payload = b""
-        messages = self.database.getPendingMessages(request.clientID)
-        ids = []
-        for msg in messages:  # id, from, type, content
-            pending = protocol.PendingMessage()
-            pending.messageID = int(msg[0])
-            pending.messageClientID = msg[1]
-            pending.messageType = int(msg[2])
-            pending.content = msg[3]
-            pending.messageSize = len(msg[3])
-            ids += [pending.messageID]
-            payload += pending.pack()
-        response.payloadSize = len(payload)
-        logging.info(f"Pending messages to clientID ({request.clientID}) successfully extracted.")
-        if self.write(conn, response.pack() + payload):
-            for msg_id in ids:
-                self.database.removeMessage(msg_id)
-            return True
-        return False
+    # def handleMessageSendRequest(self, conn, data):
+    #     """ store a message from one user to another """
+    #     request = protocol.MessageSendRequest()
+    #     response = protocol.MessageSentResponse()
+    #     if not request.unpack(conn, data):
+    #         logging.error("Send Message Request: Failed to parse request header!")
+    #
+    #     msg = database.Message(request.clientID,
+    #                            request.header.clientID,
+    #                            request.messageType,
+    #                            request.content)
+    #
+    #     msgId = self.database.storeMessage(msg)
+    #     if not msgId:
+    #         logging.error("Send Message Request: Failed to store msg.")
+    #         return False
+    #
+    #     response.header.payloadSize = protocol.CLIENT_ID_SIZE + protocol.MSG_ID_SIZE
+    #     response.clientID = request.clientID
+    #     response.messageID = msgId
+    #     logging.info(f"Message from clientID ({request.header.clientID}) successfully stored.")
+    #     return self.write(conn, response.pack())
+    #
+    # def handlePendingMessagesRequest(self, conn, data):
+    #     """ respond with pending messages """
+    #     request = protocol.RequestHeader()
+    #     response = protocol.ResponseHeader(protocol.EResponseCode.RESPONSE_PENDING_MSG.value)
+    #     if not request.unpack(data):
+    #         logging.error("Pending messages request: Failed to parse request header!")
+    #     try:
+    #         if not self.database.clientIdExists(request.clientID):
+    #             logging.info(f"clientID ({request.clientID}) does not exists!")
+    #             return False
+    #     except:
+    #         logging.error("Pending messages request: Failed to connect to database.")
+    #         return False
+    #
+    #     payload = b""
+    #     messages = self.database.getPendingMessages(request.clientID)
+    #     ids = []
+    #     for msg in messages:  # id, from, type, content
+    #         pending = protocol.PendingMessage()
+    #         pending.messageID = int(msg[0])
+    #         pending.messageClientID = msg[1]
+    #         pending.messageType = int(msg[2])
+    #         pending.content = msg[3]
+    #         pending.messageSize = len(msg[3])
+    #         ids += [pending.messageID]
+    #         payload += pending.pack()
+    #     response.payloadSize = len(payload)
+    #     logging.info(f"Pending messages to clientID ({request.clientID}) successfully extracted.")
+    #     if self.write(conn, response.pack() + payload):
+    #         for msg_id in ids:
+    #             self.database.removeMessage(msg_id)
+    #         return True
+    #     return False
