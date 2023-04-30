@@ -3,14 +3,6 @@ Encrypted File Transfer Server
 protocol.py: defines protocol structs and constants.
 """
 
-
-# TODO
-# CHECK TO CHANGE HEADER SIZE TO WHOLE HEADER SIZE AND NOT WITHOUT CLIENT ID.
-# CHECK IN REGISTRATION RESPONSE CLASS WHERE TO PUT RESPONSE_REGISTRATION_FAILED ENUM IF REGISTRATION FAILED.
-# CHECK HOW TO TREAT FAILED REGISTRATION RESPONSE CLASS.
-# CHECK IF NEED TO CAST FILE NAME TO STRING IN FILE SEND REQUEST.
-# CHECK IF COMMENTED CODE LINES NEEDED IN FILE SEND REQUEST.
-
 __author__ = "Arthur Rennert"
 
 import struct
@@ -25,12 +17,13 @@ NAME_SIZE = 255
 FILE_NAME_SIZE = 255
 PATH_NAME_SIZE = 255
 PUBLIC_KEY_SIZE = 160
+ENCRYPTED_AES_KEY_SIZE = 128
 AES_KEY_SIZE = 16
 CHECKSUM_SIZE = 4
 
 
 # Request Codes
-class ERequestCode(Enum):
+class RequestCode(Enum):
     REQUEST_REGISTRATION = 1100  # uuid ignored.
     REQUEST_SEND_PUBLIC_KEY = 1101
     REQUEST_SEND_FILE = 1103
@@ -40,10 +33,10 @@ class ERequestCode(Enum):
 
 
 # Responses Codes
-class EResponseCode(Enum):
+class ResponseCode(Enum):
     RESPONSE_REGISTRATION_SUCCESS = 2100
     RESPONSE_REGISTRATION_FAILED = 2101
-    RESPONSE_AES_KEY = 2102
+    RESPONSE_ENCRYPTED_KEY = 2102
     RESPONSE_SUCCESS_FILE_WITH_CRC = 2103
     RESPONSE_MSG_RECEIVED_THANKS = 2104
     RESPONSE_ERROR = 9999
@@ -105,7 +98,7 @@ class RegistrationRequest:
 
 class SuccessRegistrationResponse:
     def __init__(self):
-        self.header = ResponseHeader(EResponseCode.RESPONSE_REGISTRATION_SUCCESS.value)
+        self.header = ResponseHeader(ResponseCode.RESPONSE_REGISTRATION_SUCCESS.value)
         self.clientID = b""
 
     def pack(self):
@@ -118,10 +111,9 @@ class SuccessRegistrationResponse:
             return b""
 
 
-# How to treat this?
 class FailedRegistrationResponse:
     def __init__(self):
-        self.header = ResponseHeader(EResponseCode.RESPONSE_REGISTRATION_FAILED.value)
+        self.header = ResponseHeader(ResponseCode.RESPONSE_REGISTRATION_FAILED.value)
 
     def pack(self):
         """ Little Endian pack Response Header """
@@ -154,80 +146,67 @@ class PublicKeyRequest:
             return False
 
 
-class AESKeyResponse:
+class EncryptedKeyResponse:
     def __init__(self):
-        self.header = ResponseHeader(EResponseCode.RESPONSE_AES_KEY.value)
+        self.header = ResponseHeader(ResponseCode.RESPONSE_ENCRYPTED_KEY.value)
         self.clientID = b""
-        self.AESKey = b""
+        self.encryptedKey = b""
 
     def pack(self):
-        """ Little Endian pack Response Header, ClientID, and AES Key """
+        """ Little Endian pack Response Header, ClientID, and Encrypted Key """
         try:
             data = self.header.pack()
             data += struct.pack(f"<{CLIENT_ID_SIZE}s", self.clientID)
-            data += struct.pack(f"<{AES_KEY_SIZE}s", self.AESKey)
+            data += struct.pack(f"<{ENCRYPTED_AES_KEY_SIZE}s", self.encryptedKey)
             return data
         except:
             return b""
 
 
-class FileSendRequest:
+class SendFileRequest:
     def __init__(self):
         self.header = RequestHeader()
-        self.clientID = b''
         self.contentSize = DEFAULT_VALUE  # 4 bytes
         self.fileName = b''
-        self.msgContent = b''
+        self.fileContent = b''
 
     def unpack(self, data):
-        """ Little Endian unpack Request Header, ClientID, Content Size, File Name, and Message Content """
-        packet_size = len(data)
+        """ Little Endian unpack Request Header, Content Size, File Name, and File Content """
         if not self.header.unpack(data):
             return False
         try:
-            client_id = data[self.header.SIZE:self.header.SIZE + CLIENT_ID_SIZE]
-            self.clientID = struct.unpack(f"<{CLIENT_ID_SIZE}s", client_id)[0]
-            offset = self.header.SIZE + CLIENT_ID_SIZE
-            self.contentSize = struct.unpack("<L", data[offset:offset + CONTENT_SIZE])
-            file_name = data[offset + CONTENT_SIZE:offset + CONTENT_SIZE + FILE_NAME_SIZE]
-            self.fileName = struct.unpack(f"<{FILE_NAME_SIZE}s", file_name)
-            offset = offset + CONTENT_SIZE + FILE_NAME_SIZE
-            bytes_left_to_read = packet_size - offset
-            # if bytes_left_to_read > self.contentSize:
-            #     bytes_left_to_read = self.contentSize
-            self.msgContent = struct.unpack(f"<{bytes_left_to_read}s", data[offset:offset + bytes_left_to_read])[0]
-            # while bytes_left_to_read < self.contentSize:
-            #     data = conn.recv(packet_size)  # reuse first size of data.
-            #     data_size = len(data)
-            #     if (self.contentSize - bytes_left_to_read) < data_size:
-            #         data_size = self.contentSize - bytes_left_to_read
-            #     self.content += struct.unpack(f"<{data_size}s", data[:data_size])[0]
-            #     bytes_left_to_read += data_size
+            content_size = data[self.header.SIZE:self.header.SIZE + CONTENT_SIZE]
+            self.contentSize = struct.unpack("<L", content_size)[0]
+            offset = self.header.SIZE + CONTENT_SIZE
+            file_name = data[offset:offset + FILE_NAME_SIZE]
+            self.fileName = struct.unpack(f"<{FILE_NAME_SIZE}s", file_name)[0]
+            offset = offset + FILE_NAME_SIZE
+            file_content = data[offset:offset+self.contentSize]
+            self.fileContent = struct.unpack(f"<{self.contentSize}s", file_content)[0]
             return True
         except:
-            self.clientID = b''
             self.contentSize = DEFAULT_VALUE
             self.fileName = b''
-            self.msgContent = b''
+            self.fileContent = b''
             return False
 
 
 class FileReceivedWithCRCResponse:
     def __init__(self):
-        self.header = ResponseHeader(EResponseCode.RESPONSE_SUCCESS_FILE_WITH_CRC.value)
+        self.header = ResponseHeader(ResponseCode.RESPONSE_SUCCESS_FILE_WITH_CRC.value)
         self.clientID = b""
         self.contentSize = DEFAULT_VALUE  # 4 bytes
         self.fileName = b''
-        self.ckSum = DEFAULT_VALUE
+        self.crc = DEFAULT_VALUE
 
     def pack(self):
         """ Little Endian pack Response Header, ClientID, Content Size, File Name, and Checksum """
         try:
             data = self.header.pack()
             data += struct.pack(f"<{CLIENT_ID_SIZE}s", self.clientID)
-            data += struct.pack(f"<{CONTENT_SIZE}s", self.contentSize)
+            data += struct.pack(f"<L", self.contentSize)
             data += struct.pack(f"<{FILE_NAME_SIZE}s", self.fileName)
-            data += struct.pack(f"<{CHECKSUM_SIZE}s", self.ckSum)
+            data += struct.pack(f"<L", self.crc)
             return data
         except:
             return b""
@@ -236,67 +215,68 @@ class FileReceivedWithCRCResponse:
 class CRCValidRequest:
     def __init__(self):
         self.header = RequestHeader()
-        self.clientID = b''
         self.fileName = b''
 
     def unpack(self, data):
-        """ Little Endian unpack Request Header, ClientID, and File Name """
+        """ Little Endian unpack Request Header and File Name """
         if not self.header.unpack(data):
             return False
         try:
-            client_id = data[self.header.SIZE:self.header.SIZE + CLIENT_ID_SIZE]
-            self.clientID = struct.unpack(f"<{CLIENT_ID_SIZE}s", client_id)[0]
-            offset = self.header.SIZE + CLIENT_ID_SIZE
-            file_name = data[offset + CONTENT_SIZE:offset + CONTENT_SIZE + FILE_NAME_SIZE]
-            self.fileName = struct.unpack(f"<{FILE_NAME_SIZE}s", file_name)
+            file_name = data[self.header.SIZE:self.header.SIZE + FILE_NAME_SIZE]
+            self.fileName = struct.unpack(f"<{FILE_NAME_SIZE}s", file_name)[0]
             return True
         except:
-            self.clientID = b''
             self.fileName = b''
             return False
+
+
+class MessageReceivedResponse:
+    def __init__(self):
+        self.header = ResponseHeader(ResponseCode.RESPONSE_MSG_RECEIVED_THANKS.value)
+        self.clientID = b""
+
+    def pack(self):
+        """ Little Endian pack Response Header, ClientID """
+        try:
+            data = self.header.pack()
+            data += struct.pack(f"<{CLIENT_ID_SIZE}s", self.clientID)
+            return data
+        except:
+            return b""
 
 
 class CRCNotValidRequest:
     def __init__(self):
         self.header = RequestHeader()
-        self.clientID = b''
-        self.fileName = b''
 
     def unpack(self, data):
-        """ Little Endian unpack Request Header, ClientID, and File Name """
+        """ Little Endian unpack Request Header """
         if not self.header.unpack(data):
             return False
-        try:
-            client_id = data[self.header.SIZE:self.header.SIZE + CLIENT_ID_SIZE]
-            self.clientID = struct.unpack(f"<{CLIENT_ID_SIZE}s", client_id)[0]
-            offset = self.header.SIZE + CLIENT_ID_SIZE
-            file_name = data[offset + CONTENT_SIZE:offset + CONTENT_SIZE + FILE_NAME_SIZE]
-            self.fileName = struct.unpack(f"<{FILE_NAME_SIZE}s", file_name)
-            return True
-        except:
-            self.clientID = b''
-            self.fileName = b''
-            return False
+        return True
 
 
 class CRCNotValidFourthTimeRequest:
     def __init__(self):
         self.header = RequestHeader()
-        self.clientID = b''
-        self.fileName = b''
 
     def unpack(self, data):
-        """ Little Endian unpack Request Header, ClientID, and File Name """
+        """ Little Endian unpack Request Header """
         if not self.header.unpack(data):
             return False
+        return True
+
+
+class MsgRecvResponse:
+    def __init__(self):
+        self.header = ResponseHeader(ResponseCode.RESPONSE_MSG_RECEIVED_THANKS.value)
+        self.clientID = b""
+
+    def pack(self):
+        """ Little Endian pack Response Header, ClientID """
         try:
-            client_id = data[self.header.SIZE:self.header.SIZE + CLIENT_ID_SIZE]
-            self.clientID = struct.unpack(f"<{CLIENT_ID_SIZE}s", client_id)[0]
-            offset = self.header.SIZE + CLIENT_ID_SIZE
-            file_name = data[offset + CONTENT_SIZE:offset + CONTENT_SIZE + FILE_NAME_SIZE]
-            self.fileName = struct.unpack(f"<{FILE_NAME_SIZE}s", file_name)
-            return True
+            data = self.header.pack()
+            data += struct.pack(f"<{CLIENT_ID_SIZE}s", self.clientID)
+            return data
         except:
-            self.clientID = b''
-            self.fileName = b''
-            return False
+            return b""

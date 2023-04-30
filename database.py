@@ -3,11 +3,6 @@ Encrypted File Transfer Server
 database.py: handles server's database.
 """
 
-# TODO
-# CHECK IF ADD ID TO CONSTRUCTOR PARAMETERS LIST
-# CHECK IF REMOVE FILE IS NEEDED
-
-
 __author__ = "Arthur Rennert"
 
 import logging
@@ -19,7 +14,6 @@ DEFAULT_VALUE = 0
 
 class Client:
     """ Represents a client entry """
-
     def __init__(self, cid, cname, last_seen):
         self.ID = bytes.fromhex(cid)  # Unique client ID, 16 bytes.
         self.Name = cname  # Client's name, null terminated ascii string, 255 bytes.
@@ -28,24 +22,19 @@ class Client:
         self.AESKey = DEFAULT_VALUE
 
     def validate(self):
-        """ Validate Client attributes according to the requirements """
+        """ Validate Client attributes """
         if not self.ID or len(self.ID) != protocol.CLIENT_ID_SIZE:
             return False
         if not self.Name or len(self.Name) >= protocol.NAME_SIZE:
             return False
-        # if not self.PublicKey or len(self.PublicKey) != protocol.PUBLIC_KEY_SIZE:
-        #     return False
         if not self.LastSeen:
             return False
-        # if not self.AESKey or len(self.AESKey) != protocol.AES_KEY_SIZE:
-        #     return False
         return True
 
 
 class File:
     """ Represents a file entry """
-
-    def __init__(self, client_id, file_name, path_name, verified, content):
+    def __init__(self, client_id, file_name, path_name, verified):
         self.ID = client_id  # Client ID, 16 bytes.
         self.FileName = file_name  # File's name, 255 bytes.
         self.PathName = path_name  # File's relative path name, 255 bytes.
@@ -55,11 +44,11 @@ class File:
         """ Validate Files attributes according to the requirements """
         if not self.ID or len(self.ID) != protocol.CLIENT_ID_SIZE:
             return False
-        if not self.FileName or len(self.FileName) != protocol.FILE_NAME_SIZE:
+        if not self.FileName or len(self.FileName) >= protocol.FILE_NAME_SIZE:
             return False
-        if not self.PathName or len(self.PathName) != protocol.PATH_NAME_SIZE:
+        if not self.PathName or len(self.PathName) >= protocol.PATH_NAME_SIZE:
             return False
-        if not self.Verified:
+        if self.Verified or not type(self.Verified) is bool:
             return False
         return True
 
@@ -122,13 +111,13 @@ class Database:
               ID CHAR(16) NOT NULL PRIMARY KEY,
               FileName CHAR(255) NOT NULL,
               PathName CHAR(255) NOT NULL,
-              Verified INTEGER,
+              Verified BIT,
               FOREIGN KEY(ID) REFERENCES {Database.CLIENTS}(ID)
             );
             """)
 
     def client_username_exists(self, username):
-        """ Check whether a username already exists within the database """
+        """ Check whether a username already exists in the database """
         results = self.execute(f"SELECT * FROM {Database.CLIENTS} WHERE Name = ?", [username])
         if not results:
             return False
@@ -148,23 +137,23 @@ class Database:
         return self.execute(f"INSERT INTO {Database.CLIENTS} VALUES (?, ?, ?, ?, ?)",
                             [client.ID, client.Name, client.PublicKey, client.LastSeen, client.AESKey], True)
 
-    def store_file(self, file):
-        """ Store a message into database """
-        if not type(file) is File or not file.validate():
-            return False
-        results = self.execute(
-            f"INSERT INTO {Database.FILES} VALUES (?, ?, ?, ?)",
-            [file.ID, file.FileName, file.PathName, file.Verified], True)
-        return results
-
-    def remove_file(self, client_id):
-        """ Removes a file by client id from the database """
-        return self.execute(f"DELETE FROM {Database.FILES} WHERE ID = ?", [client_id], True)
-
     def set_last_seen(self, client_id, time):
-        """ Set last seen given a client id """
+        """ Set client's last seen given a client id and the current time """
         return self.execute(f"UPDATE {Database.CLIENTS} SET LastSeen = ? WHERE ID = ?",
                             [time, client_id], True)
+
+    def set_public_key(self, client_id, public_key):
+        """ Set client's public key given a client id and a client public key """
+        return self.execute(f"UPDATE {Database.CLIENTS} SET PublicKey = ? WHERE ID = ?",
+                            [public_key, client_id], True)
+
+    def get_client_id(self, name):
+        """ Get client ID by given client name """
+        return self.execute(f"SELECT ID FROM {Database.CLIENTS} WHERE Name = ?", [name])[0][0]
+
+    def get_client_name(self, client_id):
+        """ Get client name by given client ID """
+        return self.execute(f"SELECT Name FROM {Database.CLIENTS} WHERE ID = ?", [client_id])[0][0]
 
     def get_client_public_key(self, client_id):
         """ Given a client id, return the client's public key """
@@ -172,3 +161,36 @@ class Database:
         if not results:
             return None
         return results[0][0]
+
+    def get_client_aes(self, client_id):
+        """ Get client's aes key by given client ID """
+        results = self.execute(f"SELECT AESKey FROM {Database.CLIENTS} WHERE ID = ?", [client_id])
+        if not results:
+            return None
+        return results[0][0]
+
+    def get_is_file_verified(self, file_path):
+        """ Get whether file verified given a PathName """
+        results = self.execute(f"SELECT Verified FROM {Database.FILES} WHERE PathName = ?", [file_path])
+        if not results:
+            return None
+        return results[0][0]
+
+    def update_aes_key(self, client_id, key):
+        """ Update client's aes key by given client ID and the aes key """
+        if self.client_id_exists(client_id) is False:
+            print(f"Client with id {client_id} doesn't exist")
+            return False
+        return self.execute(f"UPDATE {Database.CLIENTS} SET AESKey = ? WHERE ID = ?", [key, client_id], True)
+
+    def insert_new_file(self, file):
+        """ Insert new client's file to the database """
+        if not type(file) is File or not file.validate():
+            return False
+        return self.execute(f"INSERT OR IGNORE INTO {Database.FILES} VALUES (?, ?, ?, ?)",
+                            [file.ID, file.FileName, file.PathName, file.Verified], True)
+
+    def update_file_verified(self, file_path, bool_val):
+        """ Update whether file is verified (crc check with client succeeded) """
+        return self.execute(f"UPDATE {Database.FILES} SET Verified = ? WHERE PathName = ?",
+                            [bool_val, file_path], True)

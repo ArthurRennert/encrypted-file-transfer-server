@@ -1,7 +1,8 @@
 """
 Encrypted File Transfer Server
-utils.py: collection of small functions which make Encrypted File Transfer server's patterns shorter and easier.
+utils.py: parsing and stop server functions for Encrypted File Transfer server usage.
 """
+
 __author__ = "Arthur Rennert"
 
 
@@ -13,8 +14,8 @@ def stop_server(err):
 
 def parse_port(filepath):
     """
-    Parse filepath for port number. Return port as integer.
-    Note: Only the first line will be read. On any failure, the default port (1234) will be returned.
+    Parse (only the first line) filepath for port number. Return port as integer.
+    In case of failure, the default port (1234) will be returned.
     """
     port = None
     try:
